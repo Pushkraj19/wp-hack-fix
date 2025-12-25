@@ -23,6 +23,13 @@ PLUGIN_EXCEPTIONS=(
     "all-in-one-wp-migration-gdrive-extension"
 )
 
+# Common plugins to upgrade to latest version if installed
+COMMON_PLUGINS_UPGRADE=(
+    "litespeed-cache"
+    "contact-form-7"
+    "sg-security"
+)
+
 # Themes to REMOVE (exact folder names)
 THEMES_TO_REMOVE=(
     "twentytwentytwo"
@@ -50,6 +57,25 @@ in_array() {
         [[ "$item" == "$needle" ]] && return 0
     done
     return 1
+}
+
+upgrade_common_plugins() {
+    echo
+    echo "Upgrading common plugins to latest versions (if installed)..."
+
+    for plugin in "${COMMON_PLUGINS_UPGRADE[@]}"; do
+        if wp_run plugin is-installed "$plugin" >/dev/null 2>&1; then
+            echo "-----"
+            echo "Plugin: $plugin"
+
+            if wp_run plugin update "$plugin" >/dev/null 2>&1; then
+                echo "Upgraded to latest version"
+            else
+                echo "Upgrade failed, skipping"
+                echo "$(date '+%F %T') Upgrade failed: $plugin" >> wp-hackfix.log
+            fi
+        fi
+    done
 }
 
 ### Verify WP-CLI exists
@@ -179,6 +205,10 @@ done
 echo
 echo "Final core checksum verification..."
 wp_run core verify-checksums
+
+echo
+echo "Upgrading the plugins to latest version..."
+upgrade_common_plugins
 
 echo
 echo "Scanning wp-config.php and index.php for suspicious PHP functions..."
