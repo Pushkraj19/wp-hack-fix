@@ -1,22 +1,79 @@
-#!/bin/bash
-#############
-# WPHACKFIX #
-#############
+#!/usr/bin/env bash
+###############################################################################
+# WPHACKFIX - WordPress malware / hack cleanup helper
+# Usage: ./wp-hack-fix.bash [wp-username-to-reset]
+###############################################################################
 
 set -euo pipefail
+
+SCRIPT_NAME="$(basename "$0")"
+LOG_DIR="./logs"
+MAIN_LOG="${LOG_DIR}/wp-hackfix.log"
+REMOVED_LOG="${LOG_DIR}/wp-hackfix-removed.log"
+
+mkdir -p "$LOG_DIR"
+chmod 700 "$LOG_DIR"
+
+log() {
+    local level="$1"; shift
+    local msg="$*"
+    local ts
+    ts="$(date '+%F %T')"
+    printf '[%s] [%s] %s\n' "$ts" "$level" "$msg" | tee -a "$MAIN_LOG"
+}
+
+log_removed() {
+    local msg="$*"
+    local ts
+    ts="$(date '+%F %T')"
+    printf '[%s] %s\n' "$ts" "$msg" >> "$REMOVED_LOG"
+}
+
+fatal() {
+    log "ERROR" "$*"
+    exit 1
+}
+
+on_error() {
+    local exit_code=$?
+    local cmd=${BASH_COMMAND:-unknown}
+    log "ERROR" "Command failed (exit=${exit_code}): ${cmd}"
+    # Do not exit here; set -e will already terminate.
+}
+trap on_error ERR
+
+killme() {
+    if [[ "$SCRIPT_NAME" == "wp-hack-fix.bash" ]]; then
+        log "INFO" "Self-destructing script..."
+        rm -f -- "$0" || log "WARN" "Failed to remove script, please delete manually."
+    else
+        log "INFO" "Remember to remove this script manually."
+    fi
+}
+trap killme EXIT
 
 echo "Starting WordPress Hack Fix Script"
 echo "----------------------------------"
 
-### Safety check
-if [ ! -f wp-config.php ]; then
-    echo "Error: wp-config.php not found. Run this from WordPress root."
-    exit 1
+###############################################################################
+# Safety checks
+###############################################################################
+
+if [[ ! -f "wp-config.php" ]]; then
+    fatal "wp-config.php not found. Run this from the WordPress root."
 fi
 
-### Detect WordPress owner
-WP_OWNER=$(stat -c '%U' wp-config.php)
-WP_GROUP=$(stat -c '%G' wp-config.php)
+if ! command -v wp >/dev/null 2>&1; then
+    fatal "wp-cli not installed or not in PATH."
+fi
+
+WP_OWNER="$(stat -c '%U' wp-config.php)"
+WP_GROUP="$(stat -c '%G' wp-config.php)"
+log "INFO" "Detected WordPress owner: ${WP_OWNER}:${WP_GROUP}"
+
+###############################################################################
+# Configuration
+###############################################################################
 
 # Plugins that should NEVER be removed even if reinstall fails
 PLUGIN_EXCEPTIONS=(
@@ -39,286 +96,316 @@ THEMES_TO_REMOVE=(
     "twentytwentyfive"
 )
 
+# Known bad plugins
 BAD_PLUGINS=(
     "wp-compat"
     "wp-vcd"
     "cache-wordpress"
 )
 
-echo "Detected WordPress owner: $WP_OWNER:$WP_GROUP"
+SUSPICIOUS_REGEX='eval\(|base64_decode\(|gzinflate\(|str_rot13\(|gzuncompress\(|assert\(|shell_exec\(|exec\(|passthru\(|system\(|popen\(|proc_open\(|curl_exec\(|fsockopen\(|stream_socket_client\(|preg_replace\(.*/e'
 
-### Wrapper to run WP-CLI as correct user
+###############################################################################
+# Helpers
+###############################################################################
+
 wp_run() {
-    if [ "$(id -u)" -eq 0 ]; then
-        sudo -u "$WP_OWNER" wp "$@"
+    # Wrapper to run WP-CLI as the correct user
+    if [[ "$(id -u)" -eq 0 ]]; then
+        sudo -u "$WP_OWNER" -- wp "$@"
     else
         wp "$@"
     fi
 }
 
-# Helper: check if value exists in array
 in_array() {
-    local needle="$1"
-    shift
+    local needle="$1"; shift
+    local item
     for item in "$@"; do
         [[ "$item" == "$needle" ]] && return 0
     done
     return 1
 }
 
-change_wp_user_password() {
-    local USERNAME="$1"
+###############################################################################
+# Password handling
+###############################################################################
 
-    # Only run if username is provided
-    [ -z "$USERNAME" ] && return 0
+change_wp_user_password() {
+    local username="${1:-}"
+
+    [[ -z "$username" ]] && return 0
 
     echo
-    echo "Password reset requested for user: $USERNAME"
+    log "INFO" "Password reset requested for user: ${username}"
 
-    if ! wp_run user get "$USERNAME" >/dev/null 2>&1; then
-        echo "User '$USERNAME' does not exist. Skipping password change."
+    if ! wp_run user get "$username" >/dev/null 2>&1; then
+        log "WARN" "User '${username}' does not exist. Skipping password change."
         return 0
     fi
 
-    local PASS1 PASS2
-
+    local pass1 pass2
     while true; do
-        read -s -p "Enter new password for user '$USERNAME': " PASS1
+        read -r -s -p "Enter new password for user '${username}': " pass1
         echo
-        read -s -p "Confirm new password: " PASS2
+        read -r -s -p "Confirm new password: " pass2
         echo
 
-        if [ -z "$PASS1" ]; then
+        if [[ -z "$pass1" ]]; then
             echo "Password cannot be empty. Try again."
             continue
         fi
 
-        if [ "$PASS1" != "$PASS2" ]; then
+        if [[ "$pass1" != "$pass2" ]]; then
             echo "Passwords do not match. Try again."
             continue
         fi
-
         break
     done
 
-    if wp_run user update "$USERNAME" --by=login --user_pass="$PASS1" >/dev/null 2>&1; then
-        echo "Password updated successfully for user: $USERNAME"
-        echo "$(date '+%F %T') Password updated for user: $USERNAME" >> wp-hackfix.log
+    if wp_run user update "$username" --by=login --user_pass="$pass1" >/dev/null 2>&1; then
+        log "INFO" "Password updated successfully for user: ${username}"
     else
-        echo "Failed to update password for user: $USERNAME"
-        echo "$(date '+%F %T') Password update failed for user: $USERNAME" >> wp-hackfix.log
+        log "ERROR" "Failed to update password for user: ${username}"
     fi
 
-    unset PASS1 PASS2
+    unset pass1 pass2
 }
+
+###############################################################################
+# Plugin operations
+###############################################################################
 
 upgrade_common_plugins() {
     echo
-    echo "Upgrading common plugins to latest versions (if installed)..."
+    log "INFO" "Upgrading selected common plugins to latest versions (if installed)..."
 
+    local plugin
     for plugin in "${COMMON_PLUGINS_UPGRADE[@]}"; do
         if wp_run plugin is-installed "$plugin" >/dev/null 2>&1; then
             echo "-----"
             echo "Plugin: $plugin"
-
             if wp_run plugin update "$plugin" >/dev/null 2>&1; then
-                echo "Upgraded to latest version"
+                log "INFO" "Plugin '${plugin}' upgraded to latest version."
             else
-                echo "Upgrade failed, skipping"
-                echo "$(date '+%F %T') Upgrade failed: $plugin" >> wp-hackfix.log
+                log "WARN" "Upgrade failed for plugin '${plugin}'."
             fi
         fi
     done
 }
 
 remove_plugin_if_exists() {
-    local PLUGIN="$1"
+    local plugin="${1:-}"
 
-    [ -z "$PLUGIN" ] && return 0
+    [[ -z "$plugin" ]] && return 0
 
     echo
-    echo "Checking for plugin to remove: $PLUGIN"
+    echo "Checking for plugin to remove: $plugin"
 
-    # If WP-CLI knows about it, deactivate first
-    if wp_run plugin is-installed "$PLUGIN" >/dev/null 2>&1; then
-        wp_run plugin deactivate "$PLUGIN" >/dev/null 2>&1 || true
+    if wp_run plugin is-installed "$plugin" >/dev/null 2>&1; then
+        wp_run plugin deactivate "$plugin" >/dev/null 2>&1 || true
     fi
 
-    PLUGIN_DIR="wp-content/plugins/$PLUGIN"
-    PLUGIN_FILE="wp-content/plugins/$PLUGIN.php"
+    local plugin_dir="wp-content/plugins/$plugin"
+    local plugin_file="wp-content/plugins/$plugin.php"
 
-    if [ -d "$PLUGIN_DIR" ]; then
-        rm -rf "$PLUGIN_DIR"
-        echo "Removed plugin directory: $PLUGIN_DIR"
-        echo "$(date '+%F %T') Removed plugin directory: $PLUGIN" >> wp-hackfix-removed.log
-
-    elif [ -f "$PLUGIN_FILE" ]; then
-        rm -f "$PLUGIN_FILE"
-        echo "Removed plugin file: $PLUGIN_FILE"
-        echo "$(date '+%F %T') Removed plugin file: $PLUGIN.php" >> wp-hackfix-removed.log
-
+    if [[ -d "$plugin_dir" ]]; then
+        rm -rf -- "$plugin_dir"
+        echo "Removed plugin directory: $plugin_dir"
+        log_removed "Removed plugin directory: $plugin"
+    elif [[ -f "$plugin_file" ]]; then
+        rm -f -- "$plugin_file"
+        echo "Removed plugin file: $plugin_file"
+        log_removed "Removed plugin file: ${plugin}.php"
     else
-        echo "Plugin '$PLUGIN' not found. Skipping."
+        echo "Plugin '$plugin' not found. Skipping."
     fi
 }
 
+reinstall_all_plugins() {
+    echo
+    log "INFO" "Reinstalling plugins (with exceptions)..."
 
-### Verify WP-CLI exists
-if ! command -v wp >/dev/null 2>&1; then
-    echo "Error: wp-cli not installed."
-    exit 1
-fi
+    # Cache plugin list to avoid multiple wp calls per plugin
+    local plugin_list
+    plugin_list="$(wp_run plugin list --fields=name,version --format=csv 2>/dev/null || true)"
 
-echo
-echo "Reinstalling WordPress core..."
-CORE_VERSION=$(wp_run core version)
-wp_run core download --force --version="$CORE_VERSION" --skip-content
+    if [[ -z "$plugin_list" ]]; then
+        log "INFO" "No plugins found."
+        return 0
+    fi
 
-echo
-echo "Removing rogue core files..."
-wp_run core verify-checksums 2>&1 \
-| grep 'should not exist:' \
-| cut -d : -f 3- \
-| while read -r file; do
-    [ -f "$file" ] && rm -fv "$file"
-done
+    # Skip CSV header
+    echo "$plugin_list" | tail -n +2 | while IFS=',' read -r name version; do
+        local plugin="$name"
+        local version="$version"
 
-echo
-echo "Reinstalling WordPress core..."
-CORE_VERSION=$(wp_run core version)
-wp_run core download --force --version="$CORE_VERSION" --skip-content
+        echo "-----"
+        echo "Plugin: $plugin"
 
-echo
-echo "Hardening wp-config.php for WP-CLI..."
-sed -i 's|^add_filter|if (function_exists("add_filter")) add_filter|g' wp-config.php
-sed -i 's|^add_action|if (function_exists("add_action")) add_action|g' wp-config.php
+        if [[ -n "$version" && "$version" != "none" ]]; then
+            if wp_run plugin install "$plugin" --force --version="$version" >/dev/null 2>&1; then
+                echo "Reinstalled successfully"
+                continue
+            fi
+        fi
 
-chown "$WP_OWNER:$WP_GROUP" wp-config.php
-
-echo
-echo "Removing Bad Plugins (if exists)..."
-for bad in "${BAD_PLUGINS[@]}"; do
-    remove_plugin_if_exists "$bad"
-done
-
-
-echo
-echo "Reinstalling plugins (with exceptions)..."
-
-wp_run plugin list --fields=name | grep -v '^name' | while read -r plugin; do
-    echo "-----"
-    echo "Plugin: $plugin"
-
-    VERSION=$(wp_run plugin list --name="$plugin" --fields=version | grep -v '^version' || true)
-
-    # Attempt reinstall
-    if [ -n "$VERSION" ]; then
-        wp_run plugin install "$plugin" --force --version="$VERSION" >/dev/null 2>&1 && {
+        if wp_run plugin install "$plugin" --force >/dev/null 2>&1; then
             echo "Reinstalled successfully"
             continue
-        }
-    else
-        wp_run plugin install "$plugin" --force >/dev/null 2>&1 && {
-            echo "Reinstalled successfully"
+        fi
+
+        echo "Reinstall failed for plugin: $plugin"
+
+        if in_array "$plugin" "${PLUGIN_EXCEPTIONS[@]}"; then
+            echo "Plugin is in exception list, skipping removal"
             continue
-        }
+        fi
+
+        remove_plugin_if_exists "$plugin"
+    done
+}
+
+###############################################################################
+# Theme operations
+###############################################################################
+
+remove_selected_themes() {
+    echo
+    log "INFO" "Removing selected themes (no reinstall)..."
+
+    local theme theme_path
+    for theme in "${THEMES_TO_REMOVE[@]}"; do
+        echo "-----"
+        echo "Theme: $theme"
+        theme_path="wp-content/themes/$theme"
+
+        if [[ -d "$theme_path" ]]; then
+            rm -rf -- "$theme_path"
+            echo "Removed theme: $theme_path"
+            log_removed "Removed theme: $theme"
+        else
+            echo "Theme not found, skipping"
+        fi
+    done
+}
+
+reinstall_all_themes() {
+    echo
+    log "INFO" "Reinstalling all themes (skipping unknown/custom ones)..."
+    echo
+    echo "Processing themes..."
+
+    local themes
+    themes="$(wp_run theme list --fields=name,version --format=csv 2>/dev/null || true)"
+
+    if [[ -z "$themes" ]]; then
+        echo "No themes installed. Skipping theme processing."
+        return 0
     fi
 
-    # Reinstall failed
-    echo "Reinstall failed for plugin: $plugin"
+    echo "$themes" | tail -n +2 | while IFS=',' read -r name version; do
+        local theme="$name"
+        local ver="$version"
 
-    # Check exception list
-    if in_array "$plugin" "${PLUGIN_EXCEPTIONS[@]}"; then
-        echo "Plugin is in exception list, skipping removal"
-        continue
-    fi
-
-    remove_plugin_if_exists "$plugin"
-
-done
-
-echo
-echo "Removing selected themes (no reinstall)..."
-
-for theme in "${THEMES_TO_REMOVE[@]}"; do
-    echo "-----"
-    echo "Theme: $theme"
-
-    THEME_PATH="wp-content/themes/$theme"
-
-    if [ -d "$THEME_PATH" ]; then
-        rm -rf "$THEME_PATH"
-        echo "Removed theme: $THEME_PATH"
-        echo "$(date '+%F %T') Removed theme: $theme" >> wp-hackfix-removed.log
-    else
-        echo "Theme not found, skipping"
-    fi
-done
-
-echo
-echo "Reinstalling all themes (skipping unknown/custom ones)..."
-
-echo
-echo "Processing themes..."
-
-THEMES=$(wp_run theme list --fields=name 2>/dev/null | grep -v '^name' || true)
-
-if [ -z "$THEMES" ]; then
-    echo "No themes installed. Skipping theme processing."
-else
-    echo "$THEMES" | while read -r theme; do
         echo "-----"
         echo "Theme: $theme"
 
-        VERSION=$(wp_run theme list --name="$theme" --fields=version 2>/dev/null | grep -v '^version' || true)
-
-        if [ -n "$VERSION" ]; then
-            if wp_run theme install "$theme" --force --version="$VERSION" >/dev/null 2>&1; then
+        if [[ -n "$ver" && "$ver" != "none" ]]; then
+            if wp_run theme install "$theme" --force --version="$ver" >/dev/null 2>&1; then
                 echo "Reinstalled successfully"
-            else
-                echo "Theme not found in repository, skipping"
-            fi
-        else
-            if wp_run theme install "$theme" --force >/dev/null 2>&1; then
-                echo "Reinstalled successfully"
-            else
-                echo "Theme not found in repository, skipping"
+                continue
             fi
         fi
+
+        if wp_run theme install "$theme" --force >/dev/null 2>&1; then
+            echo "Reinstalled successfully"
+        else
+            echo "Theme not found in repository, skipping"
+        fi
     done
-fi
-
-echo
-echo "Final core checksum verification..."
-wp_run core verify-checksums
-
-echo
-echo "Upgrading the plugins to latest version..."
-upgrade_common_plugins
-
-echo
-echo "Scanning wp-config.php and index.php for suspicious PHP functions..."
-echo "If any match is NOT part of normal WordPress core, investigate immediately."
-echo
-
-SUSPICIOUS_REGEX='eval\(|base64_decode\(|gzinflate\(|str_rot13\(|gzuncompress\(|assert\(|shell_exec\(|exec\(|passthru\(|system\(|popen\(|proc_open\(|curl_exec\(|fsockopen\(|stream_socket_client\(|preg_replace\(.*/e'
-
-grep -E -n --color=auto "$SUSPICIOUS_REGEX" wp-config.php index.php || true
-
-change_wp_user_password "${1:-}"
-
-echo
-echo "All done!"
-
-### Self-destruct if script name matches
-killme() {
-    if [[ "$(basename "$0")" == "wp-hack-fix.bash" ]]; then
-        echo -n "Self-destructing script... "
-        sleep 1
-        rm -fv "$0"
-    else
-        echo "Remember to remove this script manually."
-    fi
 }
 
-trap killme EXIT
+###############################################################################
+# Core operations
+###############################################################################
+
+reinstall_core_and_cleanup() {
+    echo
+    log "INFO" "Reinstalling WordPress core..."
+    local core_version
+    core_version="$(wp_run core version)"
+    wp_run core download --force --version="$core_version" --skip-content
+
+    echo
+    log "INFO" "Removing rogue core files..."
+    wp_run core verify-checksums 2>&1 \
+        | grep 'should not exist:' \
+        | cut -d : -f 3- \
+        | while read -r file; do
+              [[ -f "$file" ]] && rm -fv -- "$file"
+          done
+
+    echo
+    log "INFO" "Reinstalling WordPress core (second pass)..."
+    core_version="$(wp_run core version)"
+    wp_run core download --force --version="$core_version" --skip-content
+
+    echo
+    log "INFO" "Hardening wp-config.php for WP-CLI compatibility..."
+    sed -i 's|^add_filter|if (function_exists("add_filter")) add_filter|g' wp-config.php
+    sed -i 's|^add_action|if (function_exists("add_action")) add_action|g' wp-config.php
+
+    chown "$WP_OWNER:$WP_GROUP" wp-config.php
+}
+
+###############################################################################
+# Malware indicators
+###############################################################################
+
+scan_suspicious_core_files() {
+    echo
+    log "INFO" "Scanning wp-config.php and index.php for suspicious functions..."
+    echo "If any match is NOT part of normal WordPress core, investigate immediately."
+    echo
+
+    grep -E -n --color=auto "$SUSPICIOUS_REGEX" wp-config.php index.php || true
+}
+
+###############################################################################
+# Main
+###############################################################################
+
+main() {
+    local username="${1:-}"
+
+    reinstall_core_and_cleanup
+
+    echo
+    log "INFO" "Removing known bad plugins (if present)..."
+    local bad
+    for bad in "${BAD_PLUGINS[@]}"; do
+        remove_plugin_if_exists "$bad"
+    done
+
+    reinstall_all_plugins
+    remove_selected_themes
+    reinstall_all_themes
+
+    echo
+    log "INFO" "Final core checksum verification..."
+    wp_run core verify-checksums
+
+    echo
+    log "INFO" "Upgrading selected plugins to latest versions..."
+    upgrade_common_plugins
+
+    scan_suspicious_core_files
+    change_wp_user_password "$username"
+
+    echo
+    echo "All done!"
+    log "INFO" "Cleanup completed."
+}
+
+main "${1:-}"
