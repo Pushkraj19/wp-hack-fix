@@ -473,7 +473,7 @@ run_wp_cleanup() {
 
 USERNAME="${1:-}"
 
-for site in "${WP_SITES[@]}"; do
+for site in "${WP_PATHS[@]}"; do
     echo
     echo "========================================"
     echo "Processing site: $site"
