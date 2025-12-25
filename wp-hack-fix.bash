@@ -196,31 +196,52 @@ upgrade_common_plugins() {
 
 remove_plugin_if_exists() {
     local plugin="${1:-}"
-
     [[ -z "$plugin" ]] && return 0
 
     echo
-    echo "Checking for plugin to remove: $plugin"
+    echo "Checking for plugin/malware to remove: $plugin"
 
+    # Try to deactivate if WP-CLI knows about it
     if wp_run plugin is-installed "$plugin" >/dev/null 2>&1; then
         wp_run plugin deactivate "$plugin" >/dev/null 2>&1 || true
     fi
 
+    # 1) Standard plugin locations
     local plugin_dir="wp-content/plugins/$plugin"
-    local plugin_file="wp-content/plugins/$plugin.php"
+    local plugin_file_in_plugins="wp-content/plugins/$plugin.php"
 
-    if [[ -d "$plugin_dir" ]]; then
-        rm -rf -- "$plugin_dir"
-        echo "Removed plugin directory: $plugin_dir"
-        log_removed "Removed plugin directory: $plugin"
-    elif [[ -f "$plugin_file" ]]; then
-        rm -f -- "$plugin_file"
-        echo "Removed plugin file: $plugin_file"
-        log_removed "Removed plugin file: ${plugin}.php"
-    else
-        echo "Plugin '$plugin' not found. Skipping."
+    # 2) Generic single-file malware locations (common in infections)
+    #    These paths are intentionally aggressive — tune if needed.
+    local candidates=(
+        "$plugin_dir"
+        "$plugin_file_in_plugins"
+        "wp-content/$plugin"
+        "wp-content/$plugin.php"
+        "wp-content/mu-plugins/$plugin"
+        "wp-content/mu-plugins/$plugin.php"
+    )
+
+    local found_any=false
+    local target
+    for target in "${candidates[@]}"; do
+        if [[ -d "$target" ]]; then
+            rm -rf -- "$target"
+            echo "Removed directory: $target"
+            log_removed "Removed directory: $target"
+            found_any=true
+        elif [[ -f "$target" ]]; then
+            rm -f -- "$target"
+            echo "Removed file: $target"
+            log_removed "Removed file: $target"
+            found_any=true
+        fi
+    done
+
+    if [[ "$found_any" == false ]]; then
+        echo "No matching files/dirs found for '$plugin'. Skipping."
     fi
 }
+
 
 reinstall_all_plugins() {
     echo
