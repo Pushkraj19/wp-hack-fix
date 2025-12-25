@@ -21,6 +21,7 @@ WP_GROUP=$(stat -c '%G' wp-config.php)
 # Plugins that should NEVER be removed even if reinstall fails
 PLUGIN_EXCEPTIONS=(
     "all-in-one-wp-migration-gdrive-extension"
+    "astra-addon"
 )
 
 # Common plugins to upgrade to latest version if installed
