@@ -42,6 +42,16 @@ wp_run() {
     fi
 }
 
+# Helper: check if value exists in array
+in_array() {
+    local needle="$1"
+    shift
+    for item in "$@"; do
+        [[ "$item" == "$needle" ]] && return 0
+    done
+    return 1
+}
+
 ### Verify WP-CLI exists
 if ! command -v wp >/dev/null 2>&1; then
     echo "Error: wp-cli not installed."
