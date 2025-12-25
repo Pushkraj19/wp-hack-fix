@@ -50,6 +50,11 @@ wp_run core verify-checksums 2>&1 \
 done
 
 echo
+echo "Reinstalling WordPress core..."
+CORE_VERSION=$(wp_run core version)
+wp_run core download --force --version="$CORE_VERSION" --skip-content
+
+echo
 echo "Hardening wp-config.php for WP-CLI..."
 sed -i 's|^add_filter|if (function_exists("add_filter")) add_filter|g' wp-config.php
 sed -i 's|^add_action|if (function_exists("add_action")) add_action|g' wp-config.php
