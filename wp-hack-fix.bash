@@ -18,6 +18,19 @@ fi
 WP_OWNER=$(stat -c '%U' wp-config.php)
 WP_GROUP=$(stat -c '%G' wp-config.php)
 
+# Plugins that should NEVER be removed even if reinstall fails
+PLUGIN_EXCEPTIONS=(
+    "all-in-one-wp-migration-gdrive-extension"
+)
+
+# Themes to REMOVE (exact folder names)
+THEMES_TO_REMOVE=(
+    "twentytwentytwo"
+    "twentytwentythree"
+    "twentytwentyfour"
+    "twentytwentyfive"
+)
+
 echo "Detected WordPress owner: $WP_OWNER:$WP_GROUP"
 
 ### Wrapper to run WP-CLI as correct user
@@ -62,43 +75,71 @@ sed -i 's|^add_action|if (function_exists("add_action")) add_action|g' wp-config
 chown "$WP_OWNER:$WP_GROUP" wp-config.php
 
 echo
-echo "Reinstalling plugins (only removing failed ones)..."
+echo "Reinstalling plugins (with exceptions)..."
 
 wp_run plugin list --fields=name | grep -v '^name' | while read -r plugin; do
     echo "-----"
     echo "Plugin: $plugin"
 
-    PLUGIN_PATH="wp-content/plugins/$plugin"
-
     VERSION=$(wp_run plugin list --name="$plugin" --fields=version | grep -v '^version' || true)
 
     # Attempt reinstall
     if [ -n "$VERSION" ]; then
-        if wp_run plugin install "$plugin" --force --version="$VERSION" >/dev/null 2>&1; then
+        wp_run plugin install "$plugin" --force --version="$VERSION" >/dev/null 2>&1 && {
             echo "Reinstalled successfully"
             continue
-        fi
+        }
     else
-        if wp_run plugin install "$plugin" --force >/dev/null 2>&1; then
+        wp_run plugin install "$plugin" --force >/dev/null 2>&1 && {
             echo "Reinstalled successfully"
             continue
-        fi
+        }
     fi
 
-    # If we reach here, reinstall FAILED
+    # Reinstall failed
     echo "Reinstall failed for plugin: $plugin"
 
-    if [ -d "$PLUGIN_PATH" ]; then
-        echo "Removing failed plugin directory..."
-        rm -rf "$PLUGIN_PATH"
-        echo "Removed: $PLUGIN_PATH"
-        echo "$(date '+%F %T') Removed failed plugin: $plugin" >> wp-hackfix-removed.log
+    # Check exception list
+    if in_array "$plugin" "${PLUGIN_EXCEPTIONS[@]}"; then
+        echo "Plugin is in exception list, skipping removal"
+        continue
+    fi
+
+    PLUGIN_DIR="wp-content/plugins/$plugin"
+    PLUGIN_FILE="wp-content/plugins/$plugin.php"
+
+    if [ -d "$PLUGIN_DIR" ]; then
+        rm -rf "$PLUGIN_DIR"
+        echo "Removed plugin directory: $PLUGIN_DIR"
+        echo "$(date '+%F %T') Removed plugin directory: $plugin" >> wp-hackfix-removed.log
+
+    elif [ -f "$PLUGIN_FILE" ]; then
+        rm -f "$PLUGIN_FILE"
+        echo "Removed plugin file: $PLUGIN_FILE"
+        echo "$(date '+%F %T') Removed plugin file: $plugin.php" >> wp-hackfix-removed.log
+
     else
-        echo "Plugin directory not found, nothing to remove"
+        echo "Nothing found to remove for plugin: $plugin"
     fi
 done
 
+echo
+echo "Removing selected themes (no reinstall)..."
 
+for theme in "${THEMES_TO_REMOVE[@]}"; do
+    echo "-----"
+    echo "Theme: $theme"
+
+    THEME_PATH="wp-content/themes/$theme"
+
+    if [ -d "$THEME_PATH" ]; then
+        rm -rf "$THEME_PATH"
+        echo "Removed theme: $THEME_PATH"
+        echo "$(date '+%F %T') Removed theme: $theme" >> wp-hackfix-removed.log
+    else
+        echo "Theme not found, skipping"
+    fi
+done
 
 echo
 echo "Reinstalling all themes..."
