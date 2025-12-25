@@ -69,7 +69,7 @@ change_wp_user_password() {
     echo
     echo "Password reset requested for user: $USERNAME"
 
-    if ! wp_run user get "$USERNAME" >/dev/null 2>&1; then
+    if ! wp_run user get "$USERNAME" --by=login >/dev/null 2>&1; then
         echo "User '$USERNAME' does not exist. Skipping password change."
         return 0
     fi
@@ -95,7 +95,7 @@ change_wp_user_password() {
         break
     done
 
-    if wp_run user update "$USERNAME" --user_pass="$PASS1" >/dev/null 2>&1; then
+    if wp_run user update "$USERNAME" --by=login --user_pass="$PASS1" >/dev/null 2>&1; then
         echo "Password updated successfully for user: $USERNAME"
         echo "$(date '+%F %T') Password updated for user: $USERNAME" >> wp-hackfix.log
     else
@@ -105,7 +105,6 @@ change_wp_user_password() {
 
     unset PASS1 PASS2
 }
-
 
 upgrade_common_plugins() {
     echo
