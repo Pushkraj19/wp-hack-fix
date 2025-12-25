@@ -152,13 +152,29 @@ for theme in "${THEMES_TO_REMOVE[@]}"; do
 done
 
 echo
-echo "Reinstalling all themes..."
+echo "Reinstalling all themes (skipping unknown/custom ones)..."
+
 wp_run theme list --fields=name | grep -v '^name' | while read -r theme; do
     echo "-----"
     echo "Theme: $theme"
-    VERSION=$(wp_run theme list --name="$theme" --fields=version | grep -v '^version')
-    wp_run theme install "$theme" --force --version="$VERSION"
+
+    VERSION=$(wp_run theme list --name="$theme" --fields=version | grep -v '^version' || true)
+
+    if [ -n "$VERSION" ]; then
+        if wp_run theme install "$theme" --force --version="$VERSION" >/dev/null 2>&1; then
+            echo "Reinstalled successfully"
+        else
+            echo "Theme not found in repository, skipping"
+        fi
+    else
+        if wp_run theme install "$theme" --force >/dev/null 2>&1; then
+            echo "Reinstalled successfully"
+        else
+            echo "Theme not found in repository, skipping"
+        fi
+    fi
 done
+
 
 echo
 echo "Final core checksum verification..."
