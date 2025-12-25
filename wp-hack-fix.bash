@@ -2,26 +2,105 @@
 #############
 # WPHACKFIX #
 #############
-# curl -s https://raw.githubusercontent.com/renatofrota/wp-hack-fix/master/wp-hack-fix.bash && bash wp-hack-fix.bash
-# forcedly reinstall core
-wp core download --force --version=$(wp core version)
-# forcedly remove files that should not exist
-for i in $(wp core verify-checksums 2>&1 | grep 'should not exist:' | cut -d : -f 3-); do rm -fv $i; done
-# prevents add_filter and add_action in wp-config.php affecting wp-cli executions
+
+set -euo pipefail
+
+echo "Starting WordPress Hack Fix Script"
+echo "----------------------------------"
+
+### Safety check
+if [ ! -f wp-config.php ]; then
+    echo "Error: wp-config.php not found. Run this from WordPress root."
+    exit 1
+fi
+
+### Detect WordPress owner
+WP_OWNER=$(stat -c '%U' wp-config.php)
+WP_GROUP=$(stat -c '%G' wp-config.php)
+
+echo "Detected WordPress owner: $WP_OWNER:$WP_GROUP"
+
+### Wrapper to run WP-CLI as correct user
+wp_run() {
+    if [ "$(id -u)" -eq 0 ]; then
+        sudo -u "$WP_OWNER" wp "$@"
+    else
+        wp "$@"
+    fi
+}
+
+### Verify WP-CLI exists
+if ! command -v wp >/dev/null 2>&1; then
+    echo "Error: wp-cli not installed."
+    exit 1
+fi
+
+echo
+echo "Reinstalling WordPress core..."
+CORE_VERSION=$(wp_run core version)
+wp_run core download --force --version="$CORE_VERSION"
+
+echo
+echo "Removing rogue core files..."
+wp_run core verify-checksums 2>&1 \
+| grep 'should not exist:' \
+| cut -d : -f 3- \
+| while read -r file; do
+    [ -f "$file" ] && rm -fv "$file"
+done
+
+echo
+echo "Hardening wp-config.php for WP-CLI..."
 sed -i 's|^add_filter|if (function_exists("add_filter")) add_filter|g' wp-config.php
 sed -i 's|^add_action|if (function_exists("add_action")) add_action|g' wp-config.php
-# forcedly reinstall plugins
-for i in $(wp plugin list --skip-themes --skip-plugins --fields=name | grep -v '^name'); do echo -e "-----\n$i\n-----"; wp plugin install --skip-themes --skip-plugins --force "$i" --version=$(wp plugin list --skip-themes --skip-plugins --name="$i" --fields=version | grep -v '^version'); done
-# forcedly reinstall themes
-for i in $(wp theme list --skip-themes --skip-plugins --fields=name | grep -v '^name'); do echo -e "-----\n$i\n-----"; wp theme install --skip-themes --skip-plugins --force "$i" --version=$(wp theme list --skip-themes --skip-plugins --name="$i" --fields=version | grep -v '^version'); done
-# check
-wp core verify-checksums
-# find nasty include/require on wp-config.php and index.php
-echo -e "\nif you see any file other than 'wp-settings.php' and 'wp-blog-header.php' in the lines below, check your wp-config.php and index.php files for malware code injection:\n"
-grep -w --color "include\|include_once\|require\|require_once" wp-config.php index.php
-echo -e "\nAll done!"
 
+chown "$WP_OWNER:$WP_GROUP" wp-config.php
+
+echo
+echo "Reinstalling all plugins..."
+wp_run plugin list --fields=name | grep -v '^name' | while read -r plugin; do
+    echo "-----"
+    echo "Plugin: $plugin"
+    VERSION=$(wp_run plugin list --name="$plugin" --fields=version | grep -v '^version')
+    wp_run plugin install "$plugin" --force --version="$VERSION"
+done
+
+echo
+echo "Reinstalling all themes..."
+wp_run theme list --fields=name | grep -v '^name' | while read -r theme; do
+    echo "-----"
+    echo "Theme: $theme"
+    VERSION=$(wp_run theme list --name="$theme" --fields=version | grep -v '^version')
+    wp_run theme install "$theme" --force --version="$VERSION"
+done
+
+echo
+echo "Final core checksum verification..."
+wp_run core verify-checksums
+
+echo
+echo "Scanning wp-config.php and index.php for suspicious includes..."
+echo "If you see files other than wp-settings.php or wp-blog-header.php, investigate immediately."
+echo
+
+grep -w --color=auto "include\|include_once\|require\|require_once" wp-config.php index.php || true
+
+echo
+echo "Fixing ownership recursively..."
+chown -R "$WP_OWNER:$WP_GROUP" .
+
+echo
+echo "All done!"
+
+### Self-destruct if script name matches
 killme() {
-    [[ "$0" == "wp-hack-fix.bash" ]] && echo -n "Done! Self destroying... " && sleep 1 && rm -fv "$0" || echo "It's all done. Do not forget to remove this script.";
+    if [[ "$(basename "$0")" == "wp-hack-fix.bash" ]]; then
+        echo -n "Self-destructing script... "
+        sleep 1
+        rm -fv "$0"
+    else
+        echo "Remember to remove this script manually."
+    fi
 }
+
 trap killme EXIT
