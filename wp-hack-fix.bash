@@ -40,7 +40,7 @@ THEMES_TO_REMOVE=(
 )
 
 BAD_PLUGINS=(
-    "wp-compact"
+    "wp-compat"
     "wp-vcd"
     "cache-wordpress"
 )
