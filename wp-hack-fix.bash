@@ -39,6 +39,12 @@ THEMES_TO_REMOVE=(
     "twentytwentyfive"
 )
 
+BAD_PLUGINS=(
+    "wp-compact"
+    "wp-vcd"
+    "cache-wordpress"
+)
+
 echo "Detected WordPress owner: $WP_OWNER:$WP_GROUP"
 
 ### Wrapper to run WP-CLI as correct user
@@ -125,6 +131,38 @@ upgrade_common_plugins() {
     done
 }
 
+remove_plugin_if_exists() {
+    local PLUGIN="$1"
+
+    [ -z "$PLUGIN" ] && return 0
+
+    echo
+    echo "Checking for plugin to remove: $PLUGIN"
+
+    # If WP-CLI knows about it, deactivate first
+    if wp_run plugin is-installed "$PLUGIN" >/dev/null 2>&1; then
+        wp_run plugin deactivate "$PLUGIN" >/dev/null 2>&1 || true
+    fi
+
+    PLUGIN_DIR="wp-content/plugins/$PLUGIN"
+    PLUGIN_FILE="wp-content/plugins/$PLUGIN.php"
+
+    if [ -d "$PLUGIN_DIR" ]; then
+        rm -rf "$PLUGIN_DIR"
+        echo "Removed plugin directory: $PLUGIN_DIR"
+        echo "$(date '+%F %T') Removed plugin directory: $PLUGIN" >> wp-hackfix-removed.log
+
+    elif [ -f "$PLUGIN_FILE" ]; then
+        rm -f "$PLUGIN_FILE"
+        echo "Removed plugin file: $PLUGIN_FILE"
+        echo "$(date '+%F %T') Removed plugin file: $PLUGIN.php" >> wp-hackfix-removed.log
+
+    else
+        echo "Plugin '$PLUGIN' not found. Skipping."
+    fi
+}
+
+
 ### Verify WP-CLI exists
 if ! command -v wp >/dev/null 2>&1; then
     echo "Error: wp-cli not installed."
@@ -158,6 +196,13 @@ sed -i 's|^add_action|if (function_exists("add_action")) add_action|g' wp-config
 chown "$WP_OWNER:$WP_GROUP" wp-config.php
 
 echo
+echo "Removing Bad Plugins (if exists)..."
+for bad in "${BAD_PLUGINS[@]}"; do
+    remove_plugin_if_exists "$bad"
+done
+
+
+echo
 echo "Reinstalling plugins (with exceptions)..."
 
 wp_run plugin list --fields=name | grep -v '^name' | while read -r plugin; do
@@ -188,22 +233,8 @@ wp_run plugin list --fields=name | grep -v '^name' | while read -r plugin; do
         continue
     fi
 
-    PLUGIN_DIR="wp-content/plugins/$plugin"
-    PLUGIN_FILE="wp-content/plugins/$plugin.php"
+    remove_plugin_if_exists "$plugin"
 
-    if [ -d "$PLUGIN_DIR" ]; then
-        rm -rf "$PLUGIN_DIR"
-        echo "Removed plugin directory: $PLUGIN_DIR"
-        echo "$(date '+%F %T') Removed plugin directory: $plugin" >> wp-hackfix-removed.log
-
-    elif [ -f "$PLUGIN_FILE" ]; then
-        rm -f "$PLUGIN_FILE"
-        echo "Removed plugin file: $PLUGIN_FILE"
-        echo "$(date '+%F %T') Removed plugin file: $plugin.php" >> wp-hackfix-removed.log
-
-    else
-        echo "Nothing found to remove for plugin: $plugin"
-    fi
 done
 
 echo
