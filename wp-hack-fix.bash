@@ -9,6 +9,9 @@
 # Auto-detect WordPress installations
 ###############################################################################
 
+
+set -euo pipefail
+
 WP_BASE="/home"
 WP_PATHS=()
 
@@ -25,11 +28,9 @@ fi
 echo "Detected ${#WP_PATHS[@]} WordPress installation(s)"
 echo
 
-
-set -euo pipefail
-
 SCRIPT_NAME="$(basename "$0")"
-LOG_DIR="./logs"
+SITE_NAME="$(basename "$(pwd)")"
+LOG_DIR="./logs-$SITE_NAME"
 MAIN_LOG="${LOG_DIR}/wp-hackfix.log"
 REMOVED_LOG="${LOG_DIR}/wp-hackfix-removed.log"
 
@@ -79,7 +80,12 @@ run_wp_cleanup() {
     local USERNAME="$2"
 
     cd "$WP_ROOT" || return
-    
+
+    if ! wp core is-installed >/dev/null 2>&1; then
+        echo "Not a valid WordPress install, skipping"
+        return
+    fi
+
     echo "Starting WordPress Hack Fix Script"
     echo "----------------------------------"
     
@@ -457,6 +463,8 @@ run_wp_cleanup() {
         echo "All done!"
         log "INFO" "Cleanup completed."
     }
+
+    main "$USERNAME"
 }
 
 ###############################################################################
