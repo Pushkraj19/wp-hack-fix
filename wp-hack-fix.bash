@@ -34,6 +34,14 @@ LOG_DIR="./logs-$SITE_NAME"
 MAIN_LOG="${LOG_DIR}/wp-hackfix.log"
 REMOVED_LOG="${LOG_DIR}/wp-hackfix-removed.log"
 
+###############################################################################
+# Domains to skip (folder names under /home)
+###############################################################################
+
+SKIP_DOMAINS=(
+    "backlinksgenerator.in"
+)
+
 mkdir -p "$LOG_DIR"
 chmod 700 "$LOG_DIR"
 
@@ -469,6 +477,14 @@ run_wp_cleanup() {
 USERNAME="${1:-}"
 
 for site in "${WP_PATHS[@]}"; do
+
+    DOMAIN="$(basename "$(dirname "$site")")"
+
+    if printf '%s\n' "${SKIP_DOMAINS[@]}" | grep -qx "$DOMAIN"; then
+        echo "Skipping domain: $DOMAIN"
+        continue
+    fi
+
     echo
     echo "========================================"
     echo "Processing site: $site"
