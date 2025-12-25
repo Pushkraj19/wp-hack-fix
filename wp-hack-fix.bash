@@ -62,28 +62,50 @@ in_array() {
 
 change_wp_user_password() {
     local USERNAME="$1"
-    local NEW_PASSWORD="$2"
 
-    # Only run if both arguments are provided
-    if [ -z "$USERNAME" ] || [ -z "$NEW_PASSWORD" ]; then
+    # Only run if username is provided
+    [ -z "$USERNAME" ] && return 0
+
+    echo
+    echo "Password reset requested for user: $USERNAME"
+
+    if ! wp_run user get "$USERNAME" >/dev/null 2>&1; then
+        echo "User '$USERNAME' does not exist. Skipping password change."
         return 0
     fi
 
-    echo
-    echo "Attempting password reset for user: $USERNAME"
+    local PASS1 PASS2
 
-    if wp_run user get "$USERNAME" >/dev/null 2>&1; then
-        if wp_run user update "$USERNAME" --user_pass="$NEW_PASSWORD" >/dev/null 2>&1; then
-            echo "Password updated successfully for user: $USERNAME"
-            echo "$(date '+%F %T') Password updated for user: $USERNAME" >> wp-hackfix.log
-        else
-            echo "Failed to update password for user: $USERNAME"
-            echo "$(date '+%F %T') Password update failed for user: $USERNAME" >> wp-hackfix.log
+    while true; do
+        read -s -p "Enter new password for user '$USERNAME': " PASS1
+        echo
+        read -s -p "Confirm new password: " PASS2
+        echo
+
+        if [ -z "$PASS1" ]; then
+            echo "Password cannot be empty. Try again."
+            continue
         fi
+
+        if [ "$PASS1" != "$PASS2" ]; then
+            echo "Passwords do not match. Try again."
+            continue
+        fi
+
+        break
+    done
+
+    if wp_run user update "$USERNAME" --user_pass="$PASS1" >/dev/null 2>&1; then
+        echo "Password updated successfully for user: $USERNAME"
+        echo "$(date '+%F %T') Password updated for user: $USERNAME" >> wp-hackfix.log
     else
-        echo "User '$USERNAME' does not exist. Skipping password change."
+        echo "Failed to update password for user: $USERNAME"
+        echo "$(date '+%F %T') Password update failed for user: $USERNAME" >> wp-hackfix.log
     fi
+
+    unset PASS1 PASS2
 }
+
 
 upgrade_common_plugins() {
     echo
@@ -253,7 +275,7 @@ SUSPICIOUS_REGEX='eval\(|base64_decode\(|gzinflate\(|str_rot13\(|gzuncompress\(|
 
 grep -E -n --color=auto "$SUSPICIOUS_REGEX" wp-config.php index.php || true
 
-change_wp_user_password "${1:-}" "${2:-}"
+change_wp_user_password "${1:-}"
 
 echo
 echo "All done!"
