@@ -81,11 +81,6 @@ run_wp_cleanup() {
 
     cd "$WP_ROOT" || return
 
-    if ! wp core is-installed >/dev/null 2>&1; then
-        echo "Not a valid WordPress install, skipping"
-        return
-    fi
-
     echo "Starting WordPress Hack Fix Script"
     echo "----------------------------------"
     
