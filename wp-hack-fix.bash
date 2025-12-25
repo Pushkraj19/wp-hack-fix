@@ -109,15 +109,13 @@ echo "Final core checksum verification..."
 wp_run core verify-checksums
 
 echo
-echo "Scanning wp-config.php and index.php for suspicious includes..."
-echo "If you see files other than wp-settings.php or wp-blog-header.php, investigate immediately."
+echo "Scanning wp-config.php and index.php for suspicious PHP functions..."
+echo "If any match is NOT part of normal WordPress core, investigate immediately."
 echo
 
-grep -w --color=auto "include\|include_once\|require\|require_once" wp-config.php index.php || true
+SUSPICIOUS_REGEX='eval\(|base64_decode\(|gzinflate\(|str_rot13\(|gzuncompress\(|assert\(|shell_exec\(|exec\(|passthru\(|system\(|popen\(|proc_open\(|curl_exec\(|fsockopen\(|stream_socket_client\(|preg_replace\(.*/e'
 
-echo
-echo "Fixing ownership recursively..."
-chown -R "$WP_OWNER:$WP_GROUP" .
+grep -E -n --color=auto "$SUSPICIOUS_REGEX" wp-config.php index.php || true
 
 echo
 echo "All done!"
