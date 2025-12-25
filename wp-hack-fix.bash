@@ -101,6 +101,7 @@ BAD_PLUGINS=(
     "wp-compat"
     "wp-vcd"
     "cache-wordpress"
+    "wp-file-manager"
 )
 
 SUSPICIOUS_REGEX='eval\(|base64_decode\(|gzinflate\(|str_rot13\(|gzuncompress\(|assert\(|shell_exec\(|exec\(|passthru\(|system\(|popen\(|proc_open\(|curl_exec\(|fsockopen\(|stream_socket_client\(|preg_replace\(.*/e'
