@@ -57,32 +57,42 @@ sed -i 's|^add_action|if (function_exists("add_action")) add_action|g' wp-config
 chown "$WP_OWNER:$WP_GROUP" wp-config.php
 
 echo
-echo "Reinstalling all plugins (removing unknown ones)..."
+echo "Reinstalling plugins (only removing failed ones)..."
 
 wp_run plugin list --fields=name | grep -v '^name' | while read -r plugin; do
     echo "-----"
     echo "Plugin: $plugin"
 
-    # Check if plugin exists in WordPress.org repo
-    if wp_run plugin info "$plugin" >/dev/null 2>&1; then
-        VERSION=$(wp_run plugin list --name="$plugin" --fields=version | grep -v '^version')
+    PLUGIN_PATH="wp-content/plugins/$plugin"
 
-        if [ -n "$VERSION" ]; then
-            wp_run plugin install "$plugin" --force --version="$VERSION" || true
-        else
-            wp_run plugin install "$plugin" --force || true
+    VERSION=$(wp_run plugin list --name="$plugin" --fields=version | grep -v '^version' || true)
+
+    # Attempt reinstall
+    if [ -n "$VERSION" ]; then
+        if wp_run plugin install "$plugin" --force --version="$VERSION" >/dev/null 2>&1; then
+            echo "Reinstalled successfully"
+            continue
         fi
     else
-        echo "Plugin '$plugin' not found in repository."
-        echo "Removing plugin completely..."
-
-        PLUGIN_PATH="wp-content/plugins/$plugin"
-        if [ -d "$PLUGIN_PATH" ]; then
-            rm -rf "$PLUGIN_PATH"
-            echo "Removed: $PLUGIN_PATH"
+        if wp_run plugin install "$plugin" --force >/dev/null 2>&1; then
+            echo "Reinstalled successfully"
+            continue
         fi
     fi
+
+    # If we reach here, reinstall FAILED
+    echo "Reinstall failed for plugin: $plugin"
+
+    if [ -d "$PLUGIN_PATH" ]; then
+        echo "Removing failed plugin directory..."
+        rm -rf "$PLUGIN_PATH"
+        echo "Removed: $PLUGIN_PATH"
+        echo "$(date '+%F %T') Removed failed plugin: $plugin" >> wp-hackfix-removed.log
+    else
+        echo "Plugin directory not found, nothing to remove"
+    fi
 done
+
 
 
 echo
