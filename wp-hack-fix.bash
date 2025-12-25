@@ -38,7 +38,7 @@ fi
 echo
 echo "Reinstalling WordPress core..."
 CORE_VERSION=$(wp_run core version)
-wp_run core download --force --version="$CORE_VERSION"
+wp_run core download --force --version="$CORE_VERSION" --skip-content
 
 echo
 echo "Removing rogue core files..."
