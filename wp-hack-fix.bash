@@ -60,6 +60,31 @@ in_array() {
     return 1
 }
 
+change_wp_user_password() {
+    local USERNAME="$1"
+    local NEW_PASSWORD="$2"
+
+    # Only run if both arguments are provided
+    if [ -z "$USERNAME" ] || [ -z "$NEW_PASSWORD" ]; then
+        return 0
+    fi
+
+    echo
+    echo "Attempting password reset for user: $USERNAME"
+
+    if wp_run user get "$USERNAME" >/dev/null 2>&1; then
+        if wp_run user update "$USERNAME" --user_pass="$NEW_PASSWORD" >/dev/null 2>&1; then
+            echo "Password updated successfully for user: $USERNAME"
+            echo "$(date '+%F %T') Password updated for user: $USERNAME" >> wp-hackfix.log
+        else
+            echo "Failed to update password for user: $USERNAME"
+            echo "$(date '+%F %T') Password update failed for user: $USERNAME" >> wp-hackfix.log
+        fi
+    else
+        echo "User '$USERNAME' does not exist. Skipping password change."
+    fi
+}
+
 upgrade_common_plugins() {
     echo
     echo "Upgrading common plugins to latest versions (if installed)..."
@@ -181,27 +206,35 @@ done
 echo
 echo "Reinstalling all themes (skipping unknown/custom ones)..."
 
-wp_run theme list --fields=name | grep -v '^name' | while read -r theme; do
-    echo "-----"
-    echo "Theme: $theme"
+echo
+echo "Processing themes..."
 
-    VERSION=$(wp_run theme list --name="$theme" --fields=version | grep -v '^version' || true)
+THEMES=$(wp_run theme list --fields=name 2>/dev/null | grep -v '^name' || true)
 
-    if [ -n "$VERSION" ]; then
-        if wp_run theme install "$theme" --force --version="$VERSION" >/dev/null 2>&1; then
-            echo "Reinstalled successfully"
+if [ -z "$THEMES" ]; then
+    echo "No themes installed. Skipping theme processing."
+else
+    echo "$THEMES" | while read -r theme; do
+        echo "-----"
+        echo "Theme: $theme"
+
+        VERSION=$(wp_run theme list --name="$theme" --fields=version 2>/dev/null | grep -v '^version' || true)
+
+        if [ -n "$VERSION" ]; then
+            if wp_run theme install "$theme" --force --version="$VERSION" >/dev/null 2>&1; then
+                echo "Reinstalled successfully"
+            else
+                echo "Theme not found in repository, skipping"
+            fi
         else
-            echo "Theme not found in repository, skipping"
+            if wp_run theme install "$theme" --force >/dev/null 2>&1; then
+                echo "Reinstalled successfully"
+            else
+                echo "Theme not found in repository, skipping"
+            fi
         fi
-    else
-        if wp_run theme install "$theme" --force >/dev/null 2>&1; then
-            echo "Reinstalled successfully"
-        else
-            echo "Theme not found in repository, skipping"
-        fi
-    fi
-done
-
+    done
+fi
 
 echo
 echo "Final core checksum verification..."
@@ -219,6 +252,8 @@ echo
 SUSPICIOUS_REGEX='eval\(|base64_decode\(|gzinflate\(|str_rot13\(|gzuncompress\(|assert\(|shell_exec\(|exec\(|passthru\(|system\(|popen\(|proc_open\(|curl_exec\(|fsockopen\(|stream_socket_client\(|preg_replace\(.*/e'
 
 grep -E -n --color=auto "$SUSPICIOUS_REGEX" wp-config.php index.php || true
+
+change_wp_user_password "${1:-}" "${2:-}"
 
 echo
 echo "All done!"
