@@ -75,7 +75,7 @@ change_wp_user_password() {
     echo
     echo "Password reset requested for user: $USERNAME"
 
-    if ! wp_run user get "$USERNAME" --by=login >/dev/null 2>&1; then
+    if ! wp_run user get "$USERNAME" >/dev/null 2>&1; then
         echo "User '$USERNAME' does not exist. Skipping password change."
         return 0
     fi
