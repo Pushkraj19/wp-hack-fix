@@ -279,7 +279,34 @@ run_wp_cleanup() {
             echo "No matching files/dirs found for '$plugin'. Skipping."
         fi
     }
+
+    ###############################################################################
+    # Kill active malicious processes before cleanup
+    ###############################################################################
     
+    kill_malicious_activity() {
+    
+        echo
+        log "INFO" "Stopping active processes for user: $WP_OWNER"
+    
+        # 1. Kill PHP processes owned by site user
+        pkill -9 -u "$WP_OWNER" php || true
+        pkill -9 -u "$WP_OWNER" php-fpm || true
+    
+        # 2. Kill common malware-launched tools
+        for proc in bash sh curl wget perl python python3 nc ncat socat; do
+            pkill -9 -u "$WP_OWNER" "$proc" || true
+        done
+    
+        # 3. Kill suspicious long-running processes inside this WP path
+        ps -u "$WP_OWNER" -o pid,cmd --no-headers \
+            | grep "$PWD" \
+            | awk '{print $1}' \
+            | xargs -r kill -9 || true
+    
+        log "INFO" "Malicious activity suppressed for $WP_OWNER"
+    }
+
     
     reinstall_all_plugins() {
         echo
@@ -437,6 +464,8 @@ run_wp_cleanup() {
     
     main() {
         local username="${1:-}"
+
+        kill_malicious_activity
     
         reinstall_core_and_cleanup
     
