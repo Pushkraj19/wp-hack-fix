@@ -63,35 +63,14 @@ log_removed() {
 
 fatal() {
     log "ERROR" "$*"
-    return 1
-}
-
-run() {
-    local desc="$1"; shift
-    log "INFO" "RUN: $desc"
-    log "DEBUG" "CMD: $*"
-    "$@" >>"$MAIN_LOG" 2>&1
-}
-
-wp_run() {
-    log "DEBUG" "WP_CMD (cwd=$PWD, user=$WP_OWNER): wp $*"
-
-    if [[ "$(id -u)" -eq 0 ]]; then
-        sudo -u "$WP_OWNER" -- wp "$@" >>"$MAIN_LOG" 2>&1
-    else
-        wp "$@" >>"$MAIN_LOG" 2>&1
-    fi
+    exit 1
 }
 
 on_error() {
     local exit_code=$?
-    local cmd="${BASH_COMMAND}"
-    local line_no="${BASH_LINENO[0]}"
-    local src="${BASH_SOURCE[1]:-main}"
-
-    log "ERROR" "FAILED at ${src}:${line_no}"
-    log "ERROR" "Command: ${cmd}"
-    log "ERROR" "Exit code: ${exit_code}"
+    local cmd=${BASH_COMMAND:-unknown}
+    log "ERROR" "Command failed (exit=${exit_code}): ${cmd}"
+    # Do not exit here; set -e will already terminate.
 }
 trap on_error ERR
 
@@ -109,42 +88,44 @@ run_wp_cleanup() {
     local WP_ROOT="$1"
     local USERNAME="$2"
 
+    cd "$WP_ROOT" || return
+
     echo "Starting WordPress Hack Fix Script"
     echo "----------------------------------"
-
+    
     ###############################################################################
     # Safety checks
     ###############################################################################
-
+    
     if [[ ! -f "wp-config.php" ]]; then
         fatal "wp-config.php not found. Run this from the WordPress root."
     fi
-
+    
     if ! command -v wp >/dev/null 2>&1; then
         fatal "wp-cli not installed or not in PATH."
     fi
-
+    
     WP_OWNER="$(stat -c '%U' wp-config.php)"
     WP_GROUP="$(stat -c '%G' wp-config.php)"
     log "INFO" "Detected WordPress owner: ${WP_OWNER}:${WP_GROUP}"
-
+    
     ###############################################################################
     # Configuration
     ###############################################################################
-
+    
     # Plugins that should NEVER be removed even if reinstall fails
     PLUGIN_EXCEPTIONS=(
         "all-in-one-wp-migration-gdrive-extension"
         "astra-addon"
     )
-
+    
     # Common plugins to upgrade to latest version if installed
     COMMON_PLUGINS_UPGRADE=(
         "litespeed-cache"
         "contact-form-7"
         "sg-security"
     )
-
+    
     # Themes to REMOVE (exact folder names)
     THEMES_TO_REMOVE=(
         "twentytwentytwo"
@@ -152,7 +133,7 @@ run_wp_cleanup() {
         "twentytwentyfour"
         "twentytwentyfive"
     )
-
+    
     # Known bad plugins
     BAD_PLUGINS=(
         "wp-compat"
@@ -160,13 +141,22 @@ run_wp_cleanup() {
         "cache-wordpress"
         "wp-file-manager"
     )
-
+    
     SUSPICIOUS_REGEX='eval\(|base64_decode\(|gzinflate\(|str_rot13\(|gzuncompress\(|assert\(|shell_exec\(|exec\(|passthru\(|system\(|popen\(|proc_open\(|curl_exec\(|fsockopen\(|stream_socket_client\(|preg_replace\(.*/e'
-
+    
     ###############################################################################
     # Helpers
     ###############################################################################
-
+    
+    wp_run() {
+        # Wrapper to run WP-CLI as the correct user
+        if [[ "$(id -u)" -eq 0 ]]; then
+            sudo -u "$WP_OWNER" -- wp "$@"
+        else
+            wp "$@"
+        fi
+    }
+    
     in_array() {
         local needle="$1"; shift
         local item
@@ -431,7 +421,7 @@ run_wp_cleanup() {
         echo
         log "INFO" "Reinstalling WordPress core..."
         local core_version
-        core_version="$(wp_run core version 2>>"$MAIN_LOG")" || fatal "Failed to detect WP core version"
+        core_version="$(wp_run core version)"
         wp_run core download --force --version="$core_version" --skip-content
     
         echo
@@ -445,7 +435,7 @@ run_wp_cleanup() {
     
         echo
         log "INFO" "Reinstalling WordPress core (second pass)..."
-        core_version="$(wp_run core version 2>>"$MAIN_LOG")" || fatal "Failed to detect WP core version"
+        core_version="$(wp_run core version)"
         wp_run core download --force --version="$core_version" --skip-content
     
         echo
@@ -515,13 +505,8 @@ run_wp_cleanup() {
 ###############################################################################
 
 USERNAME="${1:-}"
-ORIGINAL_PWD="$(pwd)"
 
 for site in "${WP_PATHS[@]}"; do
-
-    SITE_ID="$(echo "$site" | sed 's|/|_|g')"
-    MAIN_LOG="${LOG_DIR}/${SITE_ID}.log"
-    REMOVED_LOG="${LOG_DIR}/${SITE_ID}-removed.log"
 
     DOMAIN="$(basename "$(dirname "$site")")"
 
@@ -535,12 +520,7 @@ for site in "${WP_PATHS[@]}"; do
     echo "Processing site: $site"
     echo "========================================"
 
-    cd "$site"
-    if ! run_wp_cleanup "$site" "$USERNAME"; then
-        log "ERROR" "Site skipped due to error: $site"
-    fi
-    cd "$ORIGINAL_PWD"
-
+    run_wp_cleanup "$site" "$USERNAME" || echo "Skipped $site due to error"
 done
 
 echo
