@@ -66,11 +66,22 @@ fatal() {
     exit 1
 }
 
+run() {
+    local desc="$1"; shift
+    log "INFO" "RUN: $desc"
+    log "DEBUG" "CMD: $*"
+    "$@" >>"$MAIN_LOG" 2>&1
+}
+
 on_error() {
     local exit_code=$?
-    local cmd=${BASH_COMMAND:-unknown}
-    log "ERROR" "Command failed (exit=${exit_code}): ${cmd}"
-    # Do not exit here; set -e will already terminate.
+    local cmd="${BASH_COMMAND}"
+    local line_no="${BASH_LINENO[0]}"
+    local src="${BASH_SOURCE[1]:-main}"
+
+    log "ERROR" "FAILED at ${src}:${line_no}"
+    log "ERROR" "Command: ${cmd}"
+    log "ERROR" "Exit code: ${exit_code}"
 }
 trap on_error ERR
 
@@ -149,14 +160,15 @@ run_wp_cleanup() {
     ###############################################################################
     
     wp_run() {
-        # Wrapper to run WP-CLI as the correct user
+        log "DEBUG" "WP_CMD (cwd=$PWD, user=$WP_OWNER): wp $*"
+    
         if [[ "$(id -u)" -eq 0 ]]; then
-            sudo -u "$WP_OWNER" -- wp "$@"
+            sudo -u "$WP_OWNER" -- wp "$@" >>"$MAIN_LOG" 2>&1
         else
-            wp "$@"
+            wp "$@" >>"$MAIN_LOG" 2>&1
         fi
     }
-    
+
     in_array() {
         local needle="$1"; shift
         local item
@@ -421,7 +433,7 @@ run_wp_cleanup() {
         echo
         log "INFO" "Reinstalling WordPress core..."
         local core_version
-        core_version="$(wp_run core version)"
+        core_version="$(wp_run core version 2>>"$MAIN_LOG")" || fatal "Failed to detect WP core version"
         wp_run core download --force --version="$core_version" --skip-content
     
         echo
@@ -435,7 +447,7 @@ run_wp_cleanup() {
     
         echo
         log "INFO" "Reinstalling WordPress core (second pass)..."
-        core_version="$(wp_run core version)"
+        core_version="$(wp_run core version 2>>"$MAIN_LOG")" || fatal "Failed to detect WP core version"
         wp_run core download --force --version="$core_version" --skip-content
     
         echo
@@ -508,6 +520,11 @@ USERNAME="${1:-}"
 
 for site in "${WP_PATHS[@]}"; do
 
+    SITE_ID="$(echo "$site" | sed 's|/|_|g')"
+    MAIN_LOG="${LOG_DIR}/${SITE_ID}.log"
+    REMOVED_LOG="${LOG_DIR}/${SITE_ID}-removed.log"
+
+
     DOMAIN="$(basename "$(dirname "$site")")"
 
     if printf '%s\n' "${SKIP_DOMAINS[@]}" | grep -qx "$DOMAIN"; then
@@ -520,7 +537,16 @@ for site in "${WP_PATHS[@]}"; do
     echo "Processing site: $site"
     echo "========================================"
 
-    run_wp_cleanup "$site" "$USERNAME" || echo "Skipped $site due to error"
+    log "INFO" "Validating WordPress environment..."
+
+    if ! wp_run core is-installed; then
+        fatal "WordPress core not installed or database unreachable"
+    fi
+
+    if ! run_wp_cleanup "$site" "$USERNAME"; then
+        log "ERROR" "Site skipped due to fatal error: $site"
+    fi
+
 done
 
 echo
