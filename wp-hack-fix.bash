@@ -40,6 +40,7 @@ REMOVED_LOG="${LOG_DIR}/wp-hackfix-removed.log"
 
 SKIP_DOMAINS=(
     "backlinksgenerator.in"
+    "dssinfotech.co.in"
 )
 
 mkdir -p "$LOG_DIR"
