@@ -316,6 +316,65 @@ run_wp_cleanup() {
     }
 
 
+    remove_rogue_root_php_files() {
+        # must run from WordPress root
+        [[ -f "wp-config.php" ]] || { log "ERROR" "wp-config.php not found. Run from WordPress root."; return 1; }
+    
+        echo
+        log "INFO" "Checking for rogue PHP files in WordPress root (whitelist-based)..."
+    
+        local whitelist found suspicious logfile
+        logfile="${LOG_DIR}/rogue_rootphp_quarantined_$(date +%Y%m%d_%H%M%S).log"
+    
+        # whitelist of valid WordPress root PHP files
+        whitelist="$(printf "%s\n" \
+            index.php \
+            wp-activate.php \
+            wp-blog-header.php \
+            wp-comments-post.php \
+            wp-config.php \
+            wp-cron.php \
+            wp-links-opml.php \
+            wp-load.php \
+            wp-login.php \
+            wp-mail.php \
+            wp-settings.php \
+            wp-signup.php \
+            wp-trackback.php \
+            xmlrpc.php \
+            | sort
+        )"
+    
+        # find root php files
+        found="$(find . -maxdepth 1 -type f -name "*.php" -printf "%f\n" 2>/dev/null | sort || true)"
+    
+        # suspicious = found - whitelist
+        suspicious="$(comm -23 <(printf "%s\n" "$found") <(printf "%s\n" "$whitelist") || true)"
+    
+        if [[ -z "$suspicious" ]]; then
+            log "INFO" "No rogue root PHP files found."
+            return 0
+        fi
+    
+        log "WARN" "Rogue root PHP files found (will quarantine):"
+        printf "%s\n" "$suspicious" | tee -a "$logfile" || true
+        echo | tee -a "$logfile" >/dev/null || true
+    
+        while IFS= read -r file; do
+            [[ -z "$file" ]] && continue
+    
+            if [[ -f "./$file" ]]; then
+                # quarantine instead of delete (uses your quarantine system)
+                quarantine_file "./$file"
+                echo "QUARANTINED: $file" | tee -a "$logfile" >/dev/null || true
+            else
+                echo "SKIPPED (not found): $file" | tee -a "$logfile" >/dev/null || true
+            fi
+        done <<< "$suspicious"
+    
+        log "INFO" "Done. Root PHP quarantine log saved: $logfile"
+    }
+
 
 
     ###############################################################################
@@ -575,6 +634,8 @@ run_wp_cleanup() {
 
         kill_malicious_activity
         reinstall_core_and_cleanup
+
+        remove_rogue_root_php_files
 
         echo
         log "INFO" "Removing known bad plugins (if present)..."
