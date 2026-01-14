@@ -6,6 +6,9 @@
 
 set -euo pipefail
 
+set -E
+shopt -s inherit_errexit 2>/dev/null || true
+
 ###############################################################################
 # Logging Setup
 ###############################################################################
@@ -411,12 +414,20 @@ run_wp_cleanup() {
 
         echo
         log "INFO" "Removing rogue core files..."
-        wp_run core verify-checksums 2>&1 \
+        
+        rogue_files="$(
+          wp_run core verify-checksums 2>&1 \
             | grep 'should not exist:' \
-            | cut -d : -f 3- \
-            | while read -r file; do
-                  [[ -f "$file" ]] && rm -fv -- "$file"
-              done
+            | cut -d : -f 3- || true
+        )"
+        
+        if [[ -z "${rogue_files}" ]]; then
+          log "INFO" "No rogue core files detected."
+        else
+          while IFS= read -r file; do
+            [[ -f "$file" ]] && rm -fv -- "$file"
+          done <<< "$rogue_files"
+        fi
 
         echo
         log "INFO" "Reinstalling WordPress core (second pass)..."
