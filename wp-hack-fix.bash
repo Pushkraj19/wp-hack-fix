@@ -127,6 +127,15 @@ run_wp_cleanup() {
 
     cd "$WP_ROOT"
 
+    LOG_DIR="$WP_ROOT/logs"
+    mkdir -p "$QUAR_DIR"
+    chmod 700 "$QUAR_DIR"
+    
+    QUAR_DIR="${LOG_DIR}/quarantine"
+    mkdir -p "$QUAR_DIR"
+    chmod 700 "$QUAR_DIR"
+
+
     echo "Starting WordPress Hack Fix Script"
     echo "----------------------------------"
 
@@ -198,6 +207,107 @@ run_wp_cleanup() {
         done
         return 1
     }
+
+    quarantine_file() {
+        local src="$1"
+    
+        [[ ! -f "$src" ]] && return 0
+    
+        # Make a safe filename based on original path
+        local safe_name
+        safe_name="$(echo "$src" | sed 's|/|__|g')"
+    
+        # Unique timestamp suffix
+        local ts
+        ts="$(date '+%Y%m%d_%H%M%S')"
+    
+        local dest="${QUAR_DIR}/${ts}__${safe_name}"
+    
+        # Hash before moving (best effort)
+        local hash="na"
+        if command -v sha256sum >/dev/null 2>&1; then
+            hash="$(sha256sum "$src" | awk '{print $1}')" || hash="na"
+        fi
+    
+        # Move file into quarantine (preserve file)
+        mv -f -- "$src" "$dest"
+    
+        # Make it completely unusable
+        chmod 000 "$dest" || true
+    
+        log_removed "QUARANTINED: $src  ->  $dest  (sha256=$hash)"
+        log "WARN" "Quarantined infected file: $src  ->  $dest"
+    }
+    
+    remove_infected_wpcontent_php_files() {
+        echo
+        log "INFO" "Scanning wp-content for infected/backdoor PHP files (quarantine mode)..."
+    
+        local wpcontent_dir="wp-content"
+        [[ ! -d "$wpcontent_dir" ]] && log "WARN" "wp-content not found, skipping scan." && return 0
+    
+        # Strong malware/backdoor indicators (covers your sample + common droppers)
+        # Keep specific to reduce false positives.
+        local patterns=(
+            "md5\(.*md5\("                         # md5 gate
+            "base64_decode"                        # payload decode
+            "file_put_contents"                    # dropper write
+            "fopen\(" "fwrite\("                   # file write
+            "\$_POST" "\$_REQUEST"                 # control channel
+            "eval\("                               # execution
+            "assert\("                             # execution
+            "gzinflate\(" "gzuncompress\("         # unpack
+            "str_rot13\("                          # obfuscation
+            "preg_replace\(.*/e"                   # legacy RCE
+            "shell_exec\(" "passthru\(" "system\(" "exec\(" "popen\(" "proc_open\("
+            "curl_exec\(" "fsockopen\(" "stream_socket_client\("
+            "php:\/\/input"                        # webshell io
+        )
+    
+        local rx
+        rx="$(printf "%s|" "${patterns[@]}")"
+        rx="${rx%|}"
+    
+        # Scan zones (aggressive where infections usually live)
+        local scan_dirs=(
+            "wp-content/uploads"
+            "wp-content/cache"
+            "wp-content/mu-plugins"
+            "wp-content/plugins"
+            "wp-content/themes"
+            "wp-content"
+        )
+    
+        local scanned=0
+        local quarantined=0
+    
+        for dir in "${scan_dirs[@]}"; do
+            [[ ! -d "$dir" ]] && continue
+    
+            # Find PHP files. No pipefail risk.
+            while IFS= read -r -d '' f; do
+                scanned=$((scanned + 1))
+    
+                # skip WP normal placeholder index.php files
+                if [[ "$(basename "$f")" == "index.php" ]]; then
+                    continue
+                fi
+    
+                # optional: do not touch plugin/theme main bootstrap files too aggressively
+                # but still allow if they match heavy patterns like eval/base64/file_put_contents
+                if grep -Eqi "$rx" "$f" 2>/dev/null; then
+                    quarantine_file "$f"
+                    quarantined=$((quarantined + 1))
+                fi
+    
+            done < <(find "$dir" -type f -name "*.php" -print0 2>/dev/null || true)
+        done
+    
+        log "INFO" "wp-content malware scan complete. Scanned=$scanned, Quarantined=$quarantined"
+        log "INFO" "Quarantine location: $QUAR_DIR"
+    }
+
+
 
     ###############################################################################
     # Password handling
@@ -463,6 +573,8 @@ run_wp_cleanup() {
         for bad in "${BAD_PLUGINS[@]}"; do
             remove_plugin_if_exists "$bad"
         done
+
+        remove_infected_wpcontent_php_files
 
         reinstall_all_plugins
         remove_selected_themes
