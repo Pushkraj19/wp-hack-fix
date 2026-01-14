@@ -270,11 +270,11 @@ run_wp_cleanup() {
     
         # Scan zones (aggressive where infections usually live)
         local scan_dirs=(
-            "wp-content/uploads"
-            "wp-content/cache"
-            "wp-content/mu-plugins"
-            "wp-content/plugins"
-            "wp-content/themes"
+            #"wp-content/uploads"
+            #"wp-content/cache"
+            #"wp-content/mu-plugins"
+            #"wp-content/plugins"
+            #"wp-content/themes"
             "wp-content"
         )
     
