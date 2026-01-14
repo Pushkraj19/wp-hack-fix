@@ -22,22 +22,6 @@ REMOVED_LOG="${LOG_DIR}/wp-hackfix-removed.log"
 mkdir -p "$LOG_DIR"
 chmod 700 "$LOG_DIR"
 
-log() {
-    local level="$1"; shift
-    local msg="$*"
-    local ts
-    ts="$(date '+%F %T')"
-    mkdir -p "$LOG_DIR" 2>/dev/null || true
-    printf '[%s] [%s] %s\n' "$ts" "$level" "$msg" | tee -a "$MAIN_LOG" || true
-}
-
-log_removed() {
-    local msg="$*"
-    local ts
-    ts="$(date '+%F %T')"
-    printf '[%s] %s\n' "$ts" "$msg" >> "$REMOVED_LOG"
-}
-
 fatal() {
     log "ERROR" "$*"
     exit 1
@@ -134,6 +118,25 @@ run_wp_cleanup() {
     QUAR_DIR="${LOG_DIR}/quarantine"
     mkdir -p "$QUAR_DIR"
     chmod 700 "$QUAR_DIR"
+
+    MAIN_LOG="${LOG_DIR}/wp-hackfix.log"
+    REMOVED_LOG="${LOG_DIR}/wp-hackfix-removed.log"
+
+    log() {
+        local level="$1"; shift
+        local msg="$*"
+        local ts
+        ts="$(date '+%F %T')"
+        mkdir -p "$LOG_DIR" 2>/dev/null || true
+        printf '[%s] [%s] %s\n' "$ts" "$level" "$msg" | tee -a "$MAIN_LOG" || true
+    }
+    
+    log_removed() {
+        local msg="$*"
+        local ts
+        ts="$(date '+%F %T')"
+        printf '[%s] %s\n' "$ts" "$msg" >> "$REMOVED_LOG"
+    }
 
 
     echo "Starting WordPress Hack Fix Script"
