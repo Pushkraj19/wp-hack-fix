@@ -128,8 +128,8 @@ run_wp_cleanup() {
     cd "$WP_ROOT"
 
     LOG_DIR="$WP_ROOT/logs"
-    mkdir -p "$QUAR_DIR"
-    chmod 700 "$QUAR_DIR"
+    mkdir -p "$LOG_DIR"
+    chmod 700 "$LOG_DIR"
     
     QUAR_DIR="${LOG_DIR}/quarantine"
     mkdir -p "$QUAR_DIR"
