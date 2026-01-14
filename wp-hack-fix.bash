@@ -12,7 +12,7 @@ set -euo pipefail
 
 SCRIPT_NAME="$(basename "$0")"
 SITE_NAME="$(basename "$(pwd)")"
-LOG_DIR="./logs-$SITE_NAME"
+LOG_DIR="/tmp/logs-$SITE_NAME"
 MAIN_LOG="${LOG_DIR}/wp-hackfix.log"
 REMOVED_LOG="${LOG_DIR}/wp-hackfix-removed.log"
 
