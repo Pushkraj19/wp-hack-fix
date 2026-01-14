@@ -24,7 +24,8 @@ log() {
     local msg="$*"
     local ts
     ts="$(date '+%F %T')"
-    printf '[%s] [%s] %s\n' "$ts" "$level" "$msg" | tee -a "$MAIN_LOG"
+    mkdir -p "$LOG_DIR" 2>/dev/null || true
+    printf '[%s] [%s] %s\n' "$ts" "$level" "$msg" | tee -a "$MAIN_LOG" || true
 }
 
 log_removed() {
